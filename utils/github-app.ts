@@ -15,7 +15,13 @@ export function getApp(): App {
 
     let privateKey: string;
     if (process.env.NODE_ENV === "production") {
-      privateKey = process.env.GITHUB_PRIVATE_KEY as string;
+      const rawPrivateKey = process.env.GITHUB_PRIVATE_KEY as string;
+      if (!rawPrivateKey) {
+        throw new Error("Environment variable GITHUB_PRIVATE_KEY is not set.");
+      }
+      // In production, the private key from env vars often has literal \n that need to be converted
+      // Handle both cases: actual newlines and escaped \n
+      privateKey = rawPrivateKey.replace(/\\n/g, "\n");
     } else {
       const privateKeyPath = process.env.GITHUB_PRIVATE_KEY_PATH;
       if (!privateKeyPath) {

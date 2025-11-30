@@ -167,25 +167,40 @@ async function getPublicRepoOctokit(): Promise<Octokit> {
       githubAppRepoOwner,
       githubAppRepoName
     );
-    if (installation) {
-      const octokit = await getInstallationOctokit(installation.id);
-      // Cache for 1 hour to avoid repeated installation checks
-      cachedTestRepoInstallation = {
-        octokit,
-        expiresAt: new Date(Date.now() + 60 * 60 * 1000), // 1 hour
-      };
-      return octokit;
+    if (installation && installation.id) {
+      try {
+        const octokit = await getInstallationOctokit(installation.id);
+        // Cache for 1 hour to avoid repeated installation checks
+        cachedTestRepoInstallation = {
+          octokit,
+          expiresAt: new Date(Date.now() + 60 * 60 * 1000), // 1 hour
+        };
+        return octokit;
+      } catch (installError) {
+        // If getting installation octokit fails (e.g., OpenSSL errors, auth issues),
+        // log and fall back to app.octokit
+        console.warn(
+          "Failed to get installation octokit, using app.octokit fallback:",
+          installError instanceof Error ? installError.message : installError
+        );
+      }
     }
   } catch (error) {
-    // Handle secondary rate limits gracefully
+    // Handle secondary rate limits and other errors gracefully
     if (error && typeof error === "object" && "status" in error) {
       if (error.status === 403 || error.status === 429) {
         console.warn(
           "Rate limited on installation check, using app.octokit fallback"
         );
       }
+    } else {
+      // Log other errors (like OpenSSL decoder errors) but continue to fallback
+      console.warn(
+        "Error checking installation, using app.octokit fallback:",
+        error instanceof Error ? error.message : error
+      );
     }
-    // Ignore other errors, continue to final fallback
+    // Ignore errors, continue to final fallback
   }
 
   // Final fallback to app.octokit (JWT auth, works for public repos)
