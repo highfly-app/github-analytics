@@ -1,0 +1,43 @@
+name: Deploy to Vercel
+
+on:
+   push:
+      branches:
+         - main
+   pull_request:
+      types: [opened, synchronize, reopened, labeled]
+
+jobs:
+   deploy:
+      name: Deploy to Vercel
+      runs-on: ubuntu-latest
+      permissions:
+         contents: read
+         pull-requests: write
+         deployments: write
+      # Run when:
+      # 1) Push to main branch (production), OR
+      # 2) "vercel deploy" label is just added, OR
+      # 3) PR is opened/sync/reopened AND the label is already present.
+      if: >
+         github.event_name == 'push' ||
+         (github.event.action == 'labeled' &&
+          github.event.label.name == 'vercel deploy') ||
+         ((github.event.action == 'opened' ||
+           github.event.action == 'synchronize' ||
+           github.event.action == 'reopened') &&
+          contains(github.event.pull_request.labels.*.name, 'vercel deploy'))
+      steps:
+         - name: Checkout code
+           uses: actions/checkout@v4
+
+         - name: Install Vercel CLI
+           run: npm install -g vercel@latest
+
+         - name: Deploy to Vercel
+           uses: BetaHuhn/deploy-to-vercel-action@v1
+           with:
+              GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+              VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+              VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
