@@ -1,0 +1,180 @@
+name: PR Checks
+
+on:
+   pull_request:
+      types: [opened, synchronize, reopened, edited]
+
+jobs:
+   require-checklist:
+      name: Require Checklist Completion
+      runs-on: ubuntu-latest
+      permissions:
+         contents: read
+         pull-requests: write
+         issues: write
+
+      steps:
+         - name: Checkout code
+           uses: actions/checkout@v4
+           with:
+              fetch-depth: 0
+
+         - name: Get changed files
+           id: changed-files
+           uses: tj-actions/changed-files@v43
+           with:
+              files_ignore: |
+                 **/node_modules/**
+                 **/.git/**
+                 **/.next/**
+              separator: ' '
+
+         - name: Check for process.env usage
+           id: env-check
+           run: |
+              needs_env=false
+              changed_files="${{ steps.changed-files.outputs.all_changed_files }}"
+
+              # Check only the diff for each changed file
+              for file in $changed_files; do
+                # Skip if file is in migrations, build artifacts, or doesn't exist
+                if [[ "$file" == *"migrations/"* ]] || [[ "$file" == *".next/"* ]] || [[ "$file" == *"node_modules/"* ]]; then
+                  continue
+                fi
+                
+                # Only check TypeScript, JavaScript, and JSON files
+                if [[ "$file" =~ \.(ts|tsx|js|jsx|json)$ ]]; then
+                  if [ -f "$file" ]; then
+                    # Only check ADDED lines (starting with +) for process.env usage
+                    diff_output=$(git diff origin/${{ github.event.pull_request.base.ref }}...HEAD -- "$file")
+                    if echo "$diff_output" | grep "^\+" | grep -q "process\.env" 2>/dev/null; then
+                      needs_env=true
+                    fi
+                  fi
+                fi
+              done
+
+              echo "needs_env_setup=$needs_env" >> $GITHUB_OUTPUT
+
+         - name: Check for migrations changes
+           id: migrations-check
+           run: |
+              needs_migration=false
+              changed_files="${{ steps.changed-files.outputs.all_changed_files }}"
+
+              # Check each file in the changed files list
+              for file in $changed_files; do
+                if [[ "$file" == *"migrations/"* ]]; then
+                  needs_migration=true
+                  break
+                fi
+              done
+
+              echo "needs_migration=$needs_migration" >> $GITHUB_OUTPUT
+
+         - name: Update PR description with checklist
+           uses: actions/github-script@v7
+           with:
+              github-token: ${{ secrets.GITHUB_TOKEN }}
+              script: |
+                 // Get the current PR
+                 const { data: pr } = await github.rest.pulls.get({
+                   owner: context.repo.owner,
+                   repo: context.repo.repo,
+                   pull_number: context.issue.number,
+                 });
+
+                 let currentBody = pr.body || '';
+                 let updatedBody = currentBody;
+
+                 // Define all possible tasks
+                 const allTasks = {
+                   '**Vercel Deploy**': {
+                     text: '- [ ] **Vercel Deploy**: Add the "vercel deploy" label to trigger vercel preview deployment. This ensures the changes can be deployed without an error.',
+                     needed: true, // Always needed
+                     alwaysShow: true // Always show this task
+                   },
+                   '**Environment Variables**': {
+                     text: '- [ ] **Environment Variables**: Add any new environment variables to Vercel project settings',
+                     needed: '${{ steps.env-check.outputs.needs_env_setup }}' === 'true'
+                   },
+                   '**Database Migration**': {
+                     text: '- [ ] **Database Migration**: Run the new migration(s) in Supabase before deploying',
+                     needed: '${{ steps.migrations-check.outputs.needs_migration }}' === 'true'
+                   }
+                 };
+
+                 // Get always-show tasks
+                 const alwaysShowTasks = Object.values(allTasks).filter(task => task.alwaysShow);
+                 // Get conditionally needed tasks
+                 const neededTasks = Object.values(allTasks).filter(task => task.needed && !task.alwaysShow);
+                 // Combine both: always-show tasks + conditionally needed tasks
+                 const allNeededTasks = [...alwaysShowTasks, ...neededTasks];
+
+                 // Check if the checklist header exists
+                 if (currentBody.includes('## 📋 PR Deployment Checklist')) {
+                   // If no tasks are needed (and no always-show tasks), remove the entire checklist section
+                   if (allNeededTasks.length === 0) {
+                     const checklistStart = updatedBody.indexOf('## 📋 PR Deployment Checklist');
+                     const notesText = '*These tasks are automatically detected based on your PR changes.*';
+                     const notesIndex = updatedBody.indexOf(notesText);
+                     
+                     if (checklistStart > -1 && notesIndex > -1) {
+                       // Find the end of the notes line
+                       const notesEndIndex = notesIndex + notesText.length;
+                       // Look for the next newline after the notes
+                       const nextNewline = updatedBody.indexOf('\n', notesEndIndex);
+                       
+                       const beforeChecklist = updatedBody.substring(0, checklistStart);
+                       let afterChecklist;
+                       
+                       if (nextNewline > -1) {
+                         afterChecklist = updatedBody.substring(nextNewline + 1);
+                       } else {
+                         afterChecklist = updatedBody.substring(notesEndIndex);
+                       }
+                       
+                       updatedBody = (beforeChecklist + afterChecklist).trim();
+                     }
+                   } else {
+                     // Process each task individually
+                     for (const [identifier, taskInfo] of Object.entries(allTasks)) {
+                       const taskExists = currentBody.includes(identifier);
+                       const notesIndex = updatedBody.indexOf('\n\n---\n*These tasks');
+                       
+                       if (taskInfo.needed && !taskExists) {
+                         // Task needed but doesn't exist - add it
+                         if (notesIndex > -1) {
+                           updatedBody = updatedBody.substring(0, notesIndex) + '\n' + taskInfo.text + updatedBody.substring(notesIndex);
+                         }
+                       } else if (!taskInfo.needed && !taskInfo.alwaysShow && taskExists) {
+                         // Task exists but no longer needed (and not always-show) - remove it
+                         const taskLineRegex = new RegExp(`- \\[ .\\] ${identifier.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}:.*\\n?`, 'g');
+                         updatedBody = updatedBody.replace(taskLineRegex, '');
+                       }
+                     }
+                   }
+                 } else if (allNeededTasks.length > 0) {
+                   // Create new checklist section
+                   const checklistSection = '\n\n## 📋 PR Deployment Checklist\n\n' +
+                     'Before merging, please complete the following:\n\n' +
+                     allNeededTasks.map(task => task.text).join('\n') +
+                     '\n\n---\n*These tasks are automatically detected based on your PR changes.*';
+                   
+                   updatedBody = currentBody + checklistSection;
+                 }
+
+                 // Update the PR description if it changed
+                 if (updatedBody !== currentBody) {
+                   await github.rest.pulls.update({
+                     owner: context.repo.owner,
+                     repo: context.repo.repo,
+                     pull_number: context.issue.number,
+                     body: updatedBody,
+                   });
+                 }
+
+         - name: Require Checklist
+           uses: mheap/require-checklist-action@v2.5.0
+           with:
+              requireChecklist: false
