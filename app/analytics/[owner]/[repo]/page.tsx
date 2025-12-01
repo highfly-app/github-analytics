@@ -103,7 +103,7 @@ export default function AnalyticsDashboardPage() {
           <CardContent className="space-y-4">
             <p className="text-muted-foreground">
               Analytics are being generated for this repository. This may take a
-              few minutes...
+              few minutes. You can check back later.
             </p>
             <div className="flex items-center gap-2">
               <div className="h-2 w-2 bg-primary rounded-full animate-pulse" />
