@@ -4,11 +4,5 @@
     "deploymentEnabled": {
       "main": false
     }
-  },
-  "routes": [
-    {
-      "src": "/relay-github-analytics/(.*)",
-      "dest": "https://us.i.posthog.com/$1"
-    }
-  ]
+  }
 }
