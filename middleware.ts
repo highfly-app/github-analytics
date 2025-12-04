@@ -7,12 +7,31 @@ export function middleware(request: NextRequest) {
     "localhost:3000",
   ];
 
-  // Allow CORS for static assets when proxied from main app
+  // Check if this is a PostHog relay request
+  const isPostHogRelay = request.nextUrl.pathname.startsWith(
+    "/relay-github-analytics/"
+  );
+
+  // Allow CORS for static assets and PostHog relay when proxied from main app
   const origin = request.headers.get("origin");
   if (origin && allowedOrigins.some((allowed) => origin.includes(allowed))) {
     response.headers.set("Access-Control-Allow-Origin", origin);
-    response.headers.set("Access-Control-Allow-Methods", "GET, OPTIONS");
-    response.headers.set("Access-Control-Allow-Headers", "Content-Type");
+
+    // Allow POST for PostHog relay endpoints, GET/OPTIONS for static assets
+    if (isPostHogRelay) {
+      response.headers.set(
+        "Access-Control-Allow-Methods",
+        "GET, POST, OPTIONS"
+      );
+      response.headers.set(
+        "Access-Control-Allow-Headers",
+        "Content-Type, Authorization"
+      );
+    } else {
+      response.headers.set("Access-Control-Allow-Methods", "GET, OPTIONS");
+      response.headers.set("Access-Control-Allow-Headers", "Content-Type");
+    }
+
     response.headers.set("Access-Control-Allow-Credentials", "true");
 
     // Handle preflight OPTIONS request
